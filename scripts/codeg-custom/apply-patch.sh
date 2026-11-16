@@ -2,14 +2,15 @@
 # 按 patches.conf 把 files/ 下的定制源码打包替换进工作区，构建并部署。
 #
 #   apply-patch.sh           读台账 → 替换文件 → pnpm build → 替换 web/ → 自检
-#   apply-patch.sh --check   只读自检，不改动任何东西
+#   apply-patch.sh --check   只读自检（线上状态）
+#   apply-patch.sh --dry-run 只读演练：打印本次将替换/跳过哪些文件，不改动任何东西
 #
 # 定制代码就是 files/ 下的标准 TSX 副本；本脚本不操作 git 历史、不重放提交。
 # 上游升级：git merge 上游 tag 到本分支，再跑一次本脚本。
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-CONF="$HERE/patches.conf"
+CONF=${CODEG_PATCH_CONF:-$HERE/patches.conf}
 FILES="$HERE/files"
 FORK=${CODEG_PATCH_FORK:-/data/workspace/codeg-fork}
 DATA="$HOME/.local/share/codeg"
@@ -27,7 +28,7 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
 
 # 当前 codeg 版本（数字部分）
-CUR_VER=$("$HOME/.local/bin/codeg-server" --version | tr -d 'v' | head -1)
+CUR_VER=$("$HOME/.local/bin/codeg-server" --version | sed 's/^v//' | head -1)
 ver_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; }
 
 # 上游原版（HEAD blob）是否已含该修复 → 自动退役。读 blob 而非工作区，
@@ -40,6 +41,9 @@ upstream_has_fix() {
   rm -f "$tmp"
   return $rc
 }
+
+# 分支的上游基线 tag（merge 上游 tag 后 HEAD 可达该 tag）
+base_tag() { git -C "$FORK" describe --tags --abbrev=0 HEAD 2>/dev/null || true; }
 
 # ── 只读自检 ─────────────────────────────────────────────────────────────
 selfcheck() {
@@ -87,6 +91,13 @@ command -v sqlite3 >/dev/null || die "缺少 sqlite3"
 TS=$(date +%Y%m%d-%H%M%S)
 info "codeg $CUR_VER / 场景 $SCENE / 台账 $CONF"
 
+# 基线守卫：分支的上游基线必须与已部署 codeg 版本一致，否则会把旧前端
+# 覆盖到新服务（或反之）。不一致时提示先完成官方更新 + git merge。
+BASE_TAG=$(base_tag | sed 's/^v//')
+if [ -n "$BASE_TAG" ] && [ "$BASE_TAG" != "$CUR_VER" ]; then
+  die "分支上游基线 v$BASE_TAG 与已部署 codeg $CUR_VER 不一致 —— 先让官方更新完成，再 git -C $FORK merge v$CUR_VER 后重跑"
+fi
+
 # 1) 按台账收集本次要替换的文件（标准 TSX 完整副本）
 APPLIED=(); SKIPPED=()
 while IFS='|' read -r target desc version scene probe; do
@@ -108,6 +119,17 @@ done < "$CONF"
 info "替换 ${#APPLIED[@]} 个文件，跳过 ${#SKIPPED[@]} 个"
 [ "${#APPLIED[@]}" -gt 0 ] || die "没有需要替换的文件"
 
+# 只读演练出口：到这里为止未产生任何副作用（无备份/复制/构建/部署）
+if [ "${1:-}" = "--dry-run" ]; then
+  info "演练结束：以上即本次将执行的替换计划，未改动任何文件"
+  exit 0
+fi
+
+# 1.5) 目标文件必须与 HEAD 一致（工作区干净），否则还原语义不成立
+if ! git -C "$FORK" diff --quiet HEAD -- "${APPLIED[@]}"; then
+  die "台账目标文件存在未提交改动（相对 HEAD）——先提交或还原后再运行"
+fi
+
 # 2) WAL 安全备份 db（硬约束，先做）
 info "备份 codeg.db"
 sqlite3 "$DB" ".backup '$DATA/codeg.db.backup-$TS'" || die "db 备份失败"
@@ -118,7 +140,7 @@ sqlite3 "$DB" ".backup '$DATA/codeg.db.backup-$TS'" || die "db 备份失败"
 for target in "${APPLIED[@]}"; do cp "$FILES/$target" "$FORK/$target"; done
 restore_worktree() {
   if [ -z "${CODEG_PATCH_KEEP:-}" ]; then
-    git -C "$FORK" checkout -- "${APPLIED[@]}" 2>/dev/null || true
+    git -C "$FORK" checkout HEAD -- "${APPLIED[@]}" 2>/dev/null || true
   fi
 }
 trap restore_worktree EXIT

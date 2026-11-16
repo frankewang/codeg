@@ -17,6 +17,7 @@
     "src-tauri",
     "browser-agent",
     "**/*.test.ts",
-    "**/*.test.tsx"
+    "**/*.test.tsx",
+    "scripts/codeg-custom/files"
   ]
 }

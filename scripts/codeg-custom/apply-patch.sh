@@ -100,10 +100,11 @@ fi
 
 # 1) 按台账收集本次要替换的文件（标准 TSX 完整副本）
 APPLIED=(); SKIPPED=()
-while IFS='|' read -r target desc version scene probe; do
+while IFS='|' read -r target desc version scene probe base_blob; do
   [[ -z "$target" || "$target" == \#* ]] && continue
   trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
   target=$(trim "$target"); version=$(trim "$version"); scene=$(trim "$scene"); probe=$(trim "$probe")
+  base_blob=$(trim "${base_blob:--}")
   [ -f "$FILES/$target" ] || die "副本缺失: files/$target"
   # 目标可以是上游没有的新增文件（如新手势 hook），只要求父目录存在
   [ -d "$FORK/$(dirname "$target")" ] || die "目标父目录不存在: $target"
@@ -112,6 +113,14 @@ while IFS='|' read -r target desc version scene probe; do
   if [ "$scene" != all ] && [ "$scene" != "$SCENE" ]; then echo "  SKIP 场景不符 ($scene): $target"; SKIPPED+=("$target"); continue; fi
   if [ "$probe" != "-" ] && upstream_has_fix "$target" "$probe"; then
     echo "  SKIP 上游已合入，退役: $target"; SKIPPED+=("$target"); continue
+  fi
+  # 维护兼容性：merge 上游后若该文件的 blob 变了，说明上游动过这段代码，
+  # 旧副本可能覆盖上游新修复 —— 拒绝替换，先基于新上游文件重建副本。
+  if [ "$base_blob" != "-" ]; then
+    cur_blob=$(git -C "$FORK" rev-parse "HEAD:$target" 2>/dev/null || true)
+    if [ "$cur_blob" != "$base_blob" ]; then
+      die "上游文件已变更: $target（台账基线 ${base_blob:0:8} → 当前 ${cur_blob:0:8}）。请基于新上游文件重建 files/ 副本并更新台账哈希后再运行"
+    fi
   fi
   echo "  USE  $target  [$(trim "$desc")]"
   APPLIED+=("$target")

@@ -1,6 +1,12 @@
-import { fireEvent, render } from "@testing-library/react"
+import { act, fireEvent, render } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { useTwoFingerContextMenu } from "./use-two-finger-context-menu"
 
 /**
@@ -162,5 +168,50 @@ describe("useTwoFingerContextMenu", () => {
     const { getByTestId, innerPointerDown } = setup(true)
     down(getByTestId("text"), 1)
     expect(innerPointerDown).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Integration with the REAL Radix trigger — the unit tests above use a mock
+// inner handler; these prove capture-phase stopPropagation actually beats
+// Radix's own 700ms timer, and that an UNtrusted synthetic MouseEvent is
+// accepted by Radix (some libraries ignore isTrusted=false; Radix does not).
+describe("useTwoFingerContextMenu + real Radix ContextMenu", () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  function RadixHarness() {
+    const handlers = useTwoFingerContextMenu({ longPressMs: 550 })
+    return (
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div {...handlers}>
+            <span data-testid="radix-text">message text</span>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem>Copy selection</ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    )
+  }
+
+  it("single-finger hold no longer opens Radix's menu", () => {
+    const { getByTestId, queryByText } = render(<RadixHarness />)
+    down(getByTestId("radix-text"), 1)
+    act(() => {
+      vi.advanceTimersByTime(1500) // beyond Radix's own 700ms timer
+    })
+    expect(queryByText("Copy selection")).toBeNull()
+  })
+
+  it("two-finger hold opens the real Radix menu", () => {
+    const { getByTestId, queryByText } = render(<RadixHarness />)
+    const text = getByTestId("radix-text")
+    down(text, 1, 10, 10)
+    down(text, 2, 30, 30)
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(queryByText("Copy selection")).not.toBeNull()
   })
 })

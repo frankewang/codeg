@@ -105,7 +105,8 @@ while IFS='|' read -r target desc version scene probe; do
   trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
   target=$(trim "$target"); version=$(trim "$version"); scene=$(trim "$scene"); probe=$(trim "$probe")
   [ -f "$FILES/$target" ] || die "副本缺失: files/$target"
-  [ -f "$FORK/$target" ] || die "目标不存在: $target"
+  # 目标可以是上游没有的新增文件（如新手势 hook），只要求父目录存在
+  [ -d "$FORK/$(dirname "$target")" ] || die "目标父目录不存在: $target"
   base=${version#>=}; base=${base#v}
   if ! ver_ge "$CUR_VER" "$base"; then echo "  SKIP 版本不符 ($version): $target"; SKIPPED+=("$target"); continue; fi
   if [ "$scene" != all ] && [ "$scene" != "$SCENE" ]; then echo "  SKIP 场景不符 ($scene): $target"; SKIPPED+=("$target"); continue; fi
@@ -140,7 +141,15 @@ sqlite3 "$DB" ".backup '$DATA/codeg.db.backup-$TS'" || die "db 备份失败"
 for target in "${APPLIED[@]}"; do cp "$FILES/$target" "$FORK/$target"; done
 restore_worktree() {
   if [ -z "${CODEG_PATCH_KEEP:-}" ]; then
-    git -C "$FORK" checkout HEAD -- "${APPLIED[@]}" 2>/dev/null || true
+    local target
+    for target in "${APPLIED[@]}"; do
+      if git -C "$FORK" cat-file -e "HEAD:$target" 2>/dev/null; then
+        git -C "$FORK" checkout HEAD -- "$target" 2>/dev/null || true
+      else
+        # 上游没有的新增文件：删除，保持工作区为上游镜像
+        rm -f "$FORK/$target"
+      fi
+    done
   fi
 }
 trap restore_worktree EXIT

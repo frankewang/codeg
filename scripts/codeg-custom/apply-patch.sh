@@ -150,18 +150,30 @@ sqlite3 "$DB" ".backup '$DATA/codeg.db.backup-$TS'" || die "db 备份失败"
 for target in "${APPLIED[@]}"; do cp "$FILES/$target" "$FORK/$target"; done
 restore_worktree() {
   if [ -z "${CODEG_PATCH_KEEP:-}" ]; then
+    # Group the paths and restore in ONE checkout: a SIGTERM mid-loop used to
+    # leave the tail of the list un-restored (seen on the v0.48 deploy). One
+    # call leaves no partial window. Added files (absent from HEAD) are
+    # removed separately.
     local target
+    local -a tracked=() added=()
     for target in "${APPLIED[@]}"; do
       if git -C "$FORK" cat-file -e "HEAD:$target" 2>/dev/null; then
-        git -C "$FORK" checkout HEAD -- "$target" 2>/dev/null || true
+        tracked+=("$target")
       else
-        # 上游没有的新增文件：删除，保持工作区为上游镜像
-        rm -f "$FORK/$target"
+        added+=("$target")
       fi
     done
+    if [ "${#tracked[@]}" -gt 0 ]; then
+      git -C "$FORK" checkout HEAD -- "${tracked[@]}" 2>/dev/null || true
+    fi
+    for target in "${added[@]}"; do rm -f "$FORK/$target"; done
   fi
 }
 trap restore_worktree EXIT
+# An interrupted run must still leave src/ pristine; EXIT alone can be cut
+# short when the shell is killed mid-trap on SIGTERM/SIGINT.
+trap 'restore_worktree; exit 130' INT
+trap 'restore_worktree; exit 143' TERM
 
 # 4) 构建静态导出
 info "pnpm install + pnpm build"

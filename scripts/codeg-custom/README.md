@@ -1,3 +1,15 @@
+# codeg 定制（已归档停用）
+
+> **状态：2026-11-24 起停用。** 已回归官方 0.48.1 原版前端，线上没有任何
+> 定制补丁。原因：上游 PR #1142 已合入（Markdown 中文路径图片），且
+> v0.48.0 起 `useTouchSelectionMenuGuard` 覆盖消息面板单指选词复制、
+> 会话详情弹窗自带手机常显复制按钮 —— 用户的本质需求（正确复制文字）
+> 已由官方满足。侧栏/弹窗长按仍会弹菜单，但收益不足以支撑常驻定制维护。
+> **不要再运行 `apply-patch.sh`**；`~/.local/share/codeg/codeg-patch.json`
+> 标记 `mode: stock`。若将来确实需要恢复，定制版静态前端备份在
+> `~/.local/share/codeg/web.custom-retired-20261124-183801`，本分支提交
+> `b9d0506fd` 之前的状态即完整定制层。
+
 # codeg 定制（声明式）
 
 **一个固定分支 `frankewang-custom`** = 上游 tag 原版源码 + 本目录。

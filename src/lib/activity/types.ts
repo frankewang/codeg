@@ -162,7 +162,12 @@ export type ToolResultPart = Extract<
  *  turn error. They stay where they were written, as notes. */
 export type NotePart = Extract<
   AdaptedContentPart,
-  { type: "text" } | { type: "proposed-plan" } | { type: "turn-error" }
+  | { type: "text" }
+  | { type: "proposed-plan" }
+  | { type: "turn-error" }
+  // CodeBuddy teammate results / notifications are collapsible cards, but
+  // they occupy a note slot in the timeline so they are not silently dropped.
+  | { type: "teammate-message" }
 >
 
 export type ActivityStep =

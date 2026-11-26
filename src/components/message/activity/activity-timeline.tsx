@@ -93,6 +93,10 @@ function estimateItemHeight(
   const { step } = item
   switch (step.type) {
     case "note": {
+      // A teammate card is collapsed by default and expands on click, so its
+      // height is a fixed line — measuring its markdown body would reserve a
+      // huge blank row.
+      if (step.part.type === "teammate-message") return line
       const text =
         step.part.type === "text"
           ? step.part.text

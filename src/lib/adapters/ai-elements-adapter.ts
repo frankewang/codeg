@@ -52,6 +52,12 @@ import {
   embeddedReferenceUriFor,
   refOfEmbeddedReferenceUri,
 } from "@/components/chat/composer/reference-uri"
+import {
+  hasTeammateMessage,
+  parseTeammateEnvelope,
+  TEAMMATE_MESSAGE_OPEN,
+  type TeammateMessage,
+} from "@/lib/teammate-message"
 
 /**
  * Adapted content part types for AI SDK Elements components
@@ -204,6 +210,13 @@ export type AdaptedContentPart =
   | AdaptedGeneratedImagePart
   | AdaptedPlanPart
   | AdaptedProposedPlanPart
+  /**
+   * A CodeBuddy teammate (sub-agent) result or framework notification. The
+   * agent injects these as plain `<teammate-message>` text rather than an ACP
+   * tool call, so the adapter lifts them into a dedicated card. See
+   * `@/lib/teammate-message`.
+   */
+  | { type: "teammate-message"; message: TeammateMessage }
   /**
    * The turn FAILED, in the agent's own words (`turn_error` block) — drawn as
    * one muted line closing the round, never as a reply.
@@ -624,6 +637,55 @@ function opensOwnLine(text: string, index: number): boolean {
  * open/close markers are always consumed so the raw tags never render, even for
  * an empty or truncated block.
  */
+/**
+ * Lift CodeBuddy `<teammate-message>` envelopes out of assistant/user text
+ * into dedicated parts, leaving surrounding prose as normal text. Mirrors
+ * `expandProposedPlanText`: returns null when there is no envelope, and
+ * consumes the open/close markers so raw XML never renders. An unclosed
+ * envelope becomes a streaming card while the turn is still running.
+ *
+ * Runs BEFORE the generic inline-tool expansion below so a teammate body that
+ * happens to contain inline tool syntax is not reinterpreted.
+ */
+function expandTeammateMessageText(
+  text: string,
+  isStreaming: boolean
+): AdaptedContentPart[] | null {
+  if (!hasTeammateMessage(text)) return null
+
+  const parts: AdaptedContentPart[] = []
+  let cursor = 0
+  let sawMessage = false
+
+  for (;;) {
+    const open = text.indexOf(TEAMMATE_MESSAGE_OPEN, cursor)
+    if (open === -1) break
+    // Only treat it as an envelope when the tag is at the start of a line;
+    // a quoted `<teammate-message>` inside prose stays verbatim.
+    const lineStart = open === 0 || text[open - 1] === "\n"
+    if (!lineStart) {
+      cursor = open + TEAMMATE_MESSAGE_OPEN.length
+      continue
+    }
+    const parsed = parseTeammateEnvelope(text, open, isStreaming)
+    if (!parsed) {
+      cursor = open + TEAMMATE_MESSAGE_OPEN.length
+      continue
+    }
+    sawMessage = true
+    const lead = text.slice(cursor, open)
+    if (lead.trim().length > 0) parts.push({ type: "text", text: lead.trim() })
+    parts.push({ type: "teammate-message", message: parsed.message })
+    cursor = parsed.end
+    if (parsed.message.isStreaming) break
+  }
+
+  if (!sawMessage) return null
+  const trail = text.slice(cursor)
+  if (trail.trim().length > 0) parts.push({ type: "text", text: trail.trim() })
+  return parts
+}
+
 function expandProposedPlanText(
   text: string,
   isStreaming: boolean
@@ -2055,6 +2117,10 @@ export function isTurnAnswerPart(part: AdaptedContentPart): boolean {
     case "background-task-group":
     case "goal-run":
     case "plan":
+    // Framework-injected teammate messages are process records, not the
+    // agent's answer; keeping them in `body` preserves their order and lets
+    // the collapsible card render in place.
+    case "teammate-message":
       return false
   }
 }
@@ -2465,6 +2531,19 @@ export function adaptMessageTurn(
 
   for (let index = 0; index < turn.blocks.length; index++) {
     const block = turn.blocks[index]
+
+    // CodeBuddy's team framework injects sub-agent results / completion
+    // notices as plain `<teammate-message>` text. These arrive as USER turns
+    // (the framework drops them into the lead's input queue), so this must run
+    // for every role and BEFORE the assistant-only expansions below. Live and
+    // reload both build MessageTurns that pass through here.
+    if (block.type === "text") {
+      const teammateParts = expandTeammateMessageText(block.text, isStreaming)
+      if (teammateParts) {
+        adaptedContent.push(...teammateParts)
+        continue
+      }
+    }
 
     if (turn.role === "assistant" && block.type === "text") {
       const goalExpandedParts = expandGoalUpdateText(

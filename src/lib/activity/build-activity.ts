@@ -269,6 +269,9 @@ function collectSteps(
         return
       case "proposed-plan":
       case "turn-error":
+      // CodeBuddy teammate messages are injected as user/assistant text; keep
+      // them as notes so buildActivity never drops them (it has no default).
+      case "teammate-message":
         steps.push(note(`note:${anchor}:${index}`, part))
         return
       case "reasoning": {

@@ -34,6 +34,7 @@ import { HtmlFilePreviews } from "./html-file-previews"
 import { PlainTextWithBadges } from "./plain-text-with-badges"
 import { PlanMarkdownCard } from "./plan-mode-card"
 import { TurnErrorPart } from "./turn-error-part"
+import { TeammateMessageCard } from "./teammate-message-card"
 
 /**
  * Draws a turn's parts. An agent's reply goes to the activity timeline
@@ -285,6 +286,10 @@ function renderPart(
       )
     case "proposed-plan":
       return <ProposedPlanPart key={`proposed-plan-${keyId}`} part={part} />
+    case "teammate-message":
+      return (
+        <TeammateMessageCard key={`teammate-${keyId}`} message={part.message} />
+      )
     case "generated-image":
       return (
         <GeneratedImagesBlock
